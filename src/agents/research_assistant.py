@@ -1,56 +1,45 @@
 import os
-from datetime import datetime
-from typing import Literal
+from dotenv import load_dotenv
+from typing import Literal, TypedDict, Sequence
 
-from langchain_community.tools import DuckDuckGoSearchResults, OpenWeatherMapQueryRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, MessagesState, StateGraph
-from langgraph.managed import IsLastStep
+from langgraph.managed import RemainingSteps
 from langgraph.prebuilt import ToolNode
 
-from agents.llama_guard import LlamaGuard, LlamaGuardOutput, SafetyAssessment
+from core import get_model, settings
+from neo4j import GraphDatabase
+
 from agents.models import models
-from agents.tools import calculator
 
+# Neo4j connection setup
+load_dotenv()
+neo4j_username = "neo4j"
+neo4j_password = os.getenv('NEO4J_PASSWORD')
+driver = GraphDatabase.driver("bolt://localhost:7687", auth=(neo4j_username, neo4j_password))
 
-class AgentState(MessagesState, total=False):
-    """`total=False` is PEP589 specs.
+class QuestionState(MessagesState):
+    question_id: int
+    question: str
+    description: str
+    correct_answer: str
+    attempts: int
+    messages: list[HumanMessage | AIMessage]
 
-    documentation: https://typing.readthedocs.io/en/latest/spec/typeddict.html#totality
-    """
-
-    safety: LlamaGuardOutput
-    is_last_step: IsLastStep
-
-
-web_search = DuckDuckGoSearchResults(name="WebSearch")
-tools = [web_search, calculator]
-
-# Add weather tool if API key is set
-# Register for an API key at https://openweathermap.org/api/
-if os.getenv("OPENWEATHERMAP_API_KEY") is not None:
-    tools.append(OpenWeatherMapQueryRun(name="Weather"))
-
-current_date = datetime.now().strftime("%B %d, %Y")
 instructions = f"""
-    You are a helpful research assistant with the ability to search the web and use other tools.
-    Today's date is {current_date}.
-
-    NOTE: THE USER CAN'T SEE THE TOOL RESPONSE.
+    You are a helpful AP Computer Science A coding assistant. You will present questions to the user and evaluate their answers.
 
     A few things to remember:
-    - Please include markdown-formatted links to any citations used in your response. Only include one
-    or two citations per response unless more are needed. ONLY USE LINKS RETURNED BY THE TOOLS.
-    - Use calculator tool with numexpr to answer math questions. The user does not understand numexpr,
-      so for the final response, use human readable format - e.g. "300 * 200", not "(300 \\times 200)".
+    - Use the query_neo4j tool when generating a new question.
+    - Present the question clearly to the user.
+    - Evaluate the user's answer based on the correct answer(s) provided.
+    - If the answer is incorrect, explain why without revealing the correct answer on the first attempt.
     """
 
-
-def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessage]:
-    model = model.bind_tools(tools)
+def wrap_model(model: BaseChatModel) -> RunnableSerializable[QuestionState, AIMessage]:
     preprocessor = RunnableLambda(
         lambda state: [SystemMessage(content=instructions)] + state["messages"],
         name="StateModifier",
@@ -58,90 +47,106 @@ def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessa
     return preprocessor | model
 
 
-def format_safety_message(safety: LlamaGuardOutput) -> AIMessage:
-    content = (
-        f"This conversation was flagged for unsafe content: {', '.join(safety.unsafe_categories)}"
-    )
-    return AIMessage(content=content)
-
-
-async def acall_model(state: AgentState, config: RunnableConfig) -> AgentState:
+async def acall_model(state: QuestionState, config: RunnableConfig) -> QuestionState:
     m = models[config["configurable"].get("model", "gpt-4o-mini")]
     model_runnable = wrap_model(m)
     response = await model_runnable.ainvoke(state, config)
 
-    # Run llama guard check here to avoid returning the message if it's unsafe
-    llama_guard = LlamaGuard()
-    safety_output = await llama_guard.ainvoke("Agent", state["messages"] + [response])
-    if safety_output.safety_assessment == SafetyAssessment.UNSAFE:
-        return {"messages": [format_safety_message(safety_output)], "safety": safety_output}
-
-    if state["is_last_step"] and response.tool_calls:
-        return {
-            "messages": [
-                AIMessage(
-                    id=response.id,
-                    content="Sorry, need more steps to process this request.",
-                )
-            ]
-        }
     # We return a list, because this will get added to the existing list
     return {"messages": [response]}
 
 
-async def llama_guard_input(state: AgentState, config: RunnableConfig) -> AgentState:
-    llama_guard = LlamaGuard()
-    safety_output = await llama_guard.ainvoke("User", state["messages"])
-    return {"safety": safety_output}
+def generate_question_id(state: QuestionState) -> str:
+    return f'LoLju0t00s{state["question_id"]}'
+
+def generate_seed_question(state: QuestionState) -> QuestionState:
+    questionId = generate_question_id(state)
+    query = """
+            MATCH (q:Question) WHERE (q.LolQuestionIndex.startsWith({questionId: $questionId}))
+            RETURN q.QuestionTitle, q.QuestionDescription, q.GoldenSolution
+            ORDER BY rand()
+            LIMIT 1
+            """
+    record, _, _ = driver.execute_query(query, {'questionId': questionId})
+    result = record.single()
+    if result:
+        title, description, solution = result
+        return {
+            "question": title,
+            "description": description,
+            "correct_answer": solution,
+            "attempts": 0,
+            "messages": [AIMessage(content=f"{title}\n\n{description}")],
+            "question_id": state["question_id"]
+        }
+    else:
+        return {
+            "question": "No question available",
+            "description": "Please try again later",
+            "correct_answer": "",
+            "attempts": 0,
+            "messages": [AIMessage(content="Sorry, no question is available at the moment.")],
+            "question_id": state["question_id"]
+        }
 
 
-async def block_unsafe_content(state: AgentState, config: RunnableConfig) -> AgentState:
-    safety: LlamaGuardOutput = state["safety"]
-    return {"messages": [format_safety_message(safety)]}
+async def check_answer(state: QuestionState, config: RunnableConfig) -> QuestionState:
+    m = get_model(config["configurable"].get("model", settings.DEFAULT_MODEL))
+    model_runnable = wrap_model(m)
 
+    user_answer = state["messages"][-1].content
+    prompt = f"""
+    Question: {state['question']}
+    Correct answer(s): {state['correct_answer']}
+    User's answer: {user_answer}
 
-# Define the graph
-agent = StateGraph(AgentState)
-agent.add_node("model", acall_model)
-agent.add_node("tools", ToolNode(tools))
-agent.add_node("guard_input", llama_guard_input)
-agent.add_node("block_unsafe_content", block_unsafe_content)
-agent.set_entry_point("guard_input")
+    Is the user's answer correct? If so, please say so and praise the user enthusiastically.
+    If not, explain why it's wrong without revealing the correct answer or using the word 'correct'.
+    """
 
+    response = await model_runnable.ainvoke(
+        {"messages": [AIMessage(content=prompt)]},
+        config
+    )
 
-# Check for unsafe input and block further processing if found
-def check_safety(state: AgentState) -> Literal["unsafe", "safe"]:
-    safety: LlamaGuardOutput = state["safety"]
-    match safety.safety_assessment:
-        case SafetyAssessment.UNSAFE:
-            return "unsafe"
-        case _:
-            return "safe"
+    if "correct" in response.content.lower():
+        state["messages"].append(AIMessage(content=response.content))
+        state["question_id"] += 1
+        return state
+    else:
+        state["attempts"] += 1
+        if state["attempts"] < 2:
+            state["messages"].append(AIMessage(content=f"{response.content} You have one more attempt."))
+        else:
+            state["messages"].append(AIMessage(
+                content=f"{response.content} The correct answer was: {state['correct_answer']}. Let's move on to the next question."))
+        return state
 
+# Initialize the state graph
+graph = StateGraph(QuestionState)
 
-agent.add_conditional_edges(
-    "guard_input", check_safety, {"unsafe": "block_unsafe_content", "safe": "model"}
+# Add nodes to the graph
+graph.add_node("generate_question", generate_seed_question)
+graph.add_node("check_answer", check_answer)
+
+# Define edges
+def should_continue(state: QuestionState) -> str:
+    if state["attempts"] == 2 or state["messages"][-1].content.startswith("Correct!"):
+        return "new_question"
+    return "continue"
+
+graph.add_edge("generate_question", "check_answer")
+graph.add_conditional_edges(
+    "check_answer",
+    should_continue,
+    {
+        "new_question": "generate_question",
+        "continue": "check_answer"
+    }
 )
 
-# Always END after blocking unsafe content
-agent.add_edge("block_unsafe_content", END)
+# Set the entry point
+graph.set_entry_point("generate_question")
 
-# Always run "model" after "tools"
-agent.add_edge("tools", "model")
-
-
-# After "model", if there are tool calls, run "tools". Otherwise END.
-def pending_tool_calls(state: AgentState) -> Literal["tools", "done"]:
-    last_message = state["messages"][-1]
-    if not isinstance(last_message, AIMessage):
-        raise TypeError(f"Expected AIMessage, got {type(last_message)}")
-    if last_message.tool_calls:
-        return "tools"
-    return "done"
-
-
-agent.add_conditional_edges("model", pending_tool_calls, {"tools": "tools", "done": END})
-
-research_assistant = agent.compile(
-    checkpointer=MemorySaver(),
-)
+# Compile the graph
+app = graph.compile()
