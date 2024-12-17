@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core._api import LangChainBetaWarning
@@ -63,6 +63,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(lifespan=lifespan)
 router = APIRouter(dependencies=bearer_depend)
+
+
+@router.post("/wix-endpoint")
+async def handle_wix_form(request: Request):
+    # Extract form data from the Wix webhook
+    form_data = await request.json()
+
+    # Extract the user input from the form data
+    # Adjust the key based on your Wix form structure
+    user_input = form_data.get("user_response", "")
+
+    # Create a UserInput object
+    user_input_obj = UserInput(message=user_input)
+
+    # Process the input with your agent
+    kwargs, run_id = _parse_input(user_input_obj)
+
+    try:
+        response = await ainvoke(**kwargs)
+        output = langchain_to_chat_message(response["messages"][-1])
+        output.run_id = str(run_id)
+        # Return a response that Wix can use to update the page
+        return {
+            "status": "success",
+            "response": output.content,
+            "run_id": output.run_id
+        }
+    except Exception as e:
+        logger.error(f"An exception occurred: {e}")
+        return {
+            "status": "error",
+            "message": "An unexpected error occurred"
+        }
 
 
 def _parse_input(user_input: UserInput) -> tuple[dict[str, Any], str]:
