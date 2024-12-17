@@ -1,12 +1,10 @@
-import os
-from dotenv import load_dotenv
+from os import getenv
 
 from langchain_core.tools import BaseTool, tool
 from neo4j import GraphDatabase, Record
 
 # Neo4j connection setup
-load_dotenv()
-password = os.getenv("NEO4J_PASSWORD")
+password = getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", password))
 
 

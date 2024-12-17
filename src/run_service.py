@@ -1,5 +1,4 @@
 import uvicorn
-
 from core import settings
 from dotenv import load_dotenv
 

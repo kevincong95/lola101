@@ -1,20 +1,17 @@
-import os
-from dotenv import load_dotenv
-
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
-from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
-from langgraph.graph import MessagesState, StateGraph
+from os import getenv
 
 from core import get_model, settings
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
+from langgraph.graph import MessagesState, StateGraph
 from neo4j import GraphDatabase
 
 from agents.models import models
 
 # Neo4j connection setup
-load_dotenv()
 neo4j_username = "neo4j"
-neo4j_password = os.getenv("NEO4J_PASSWORD")
+neo4j_password = getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver("bolt://localhost:7687", auth=(neo4j_username, neo4j_password))
 
 
@@ -27,7 +24,7 @@ class QuestionState(MessagesState):
     messages: list[HumanMessage | AIMessage]
 
 
-instructions = f"""
+instructions = """
     You are a helpful AP Computer Science A coding assistant. You will present questions to the user and evaluate their answers.
 
     A few things to remember:
