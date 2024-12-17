@@ -9,6 +9,7 @@ from schema import AgentInfo
 
 DEFAULT_AGENT = "research-assistant"
 
+
 @dataclass
 class Agent:
     description: str
@@ -22,6 +23,7 @@ agents: dict[str, Agent] = {
     ),
     "bg-task-agent": Agent(description="A background task agent.", graph=bg_task_agent),
 }
+
 
 def get_agent(agent_id: str) -> CompiledStateGraph:
     return agents[agent_id].graph
