@@ -1,6 +1,5 @@
 from os import getenv
 
-from core import get_model, settings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
@@ -9,6 +8,7 @@ from langgraph.graph import MessagesState, StateGraph
 from neo4j import GraphDatabase
 
 from agents.models import models
+from core import get_model, settings
 
 # Neo4j connection setup
 neo4j_username = "neo4j"

@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from typing_extensions import NotRequired, TypedDict
 
+
 class AgentInfo(BaseModel):
     """Info about an available agent."""
 

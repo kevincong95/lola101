@@ -18,7 +18,6 @@ from langgraph.graph.state import CompiledStateGraph
 from langsmith import Client as LangsmithClient
 
 from agents import DEFAULT_AGENT, get_agent, get_all_agent_info
-from core import settings
 from schema import (
     ChatHistory,
     ChatHistoryInput,
@@ -272,7 +271,7 @@ def history(input: ChatHistoryInput) -> ChatHistory:
     Get chat history.
     """
     # TODO: Hard-coding DEFAULT_AGENT here is wonky
-    agent: CompiledStateGraph = agents[DEFAULT_AGENT]
+    agent: CompiledStateGraph = get_agent(DEFAULT_AGENT)
     try:
         state_snapshot = agent.get_state(
             config=RunnableConfig(
