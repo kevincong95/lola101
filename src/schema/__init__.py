@@ -1,4 +1,5 @@
 from schema.schema import (
+    AgentInfo,
     ChatHistory,
     ChatHistoryInput,
     ChatMessage,
@@ -9,6 +10,7 @@ from schema.schema import (
 )
 
 __all__ = [
+    "AgentInfo",
     "UserInput",
     "ChatMessage",
     "StreamInput",

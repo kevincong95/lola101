@@ -17,7 +17,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 from langsmith import Client as LangsmithClient
 
-from agents import DEFAULT_AGENT, agents
+from agents import DEFAULT_AGENT, get_agent, get_all_agent_info
+from core import settings
 from schema import (
     ChatHistory,
     ChatHistoryInput,
@@ -55,8 +56,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Construct agent with Sqlite checkpointer
     # TODO: It's probably dangerous to share the same checkpointer on multiple agents
     async with AsyncSqliteSaver.from_conn_string("checkpoints.db") as saver:
-        for a in agents.values():
-            a.checkpointer = saver
+        agents = get_all_agent_info()
+        for a in agents:
+            agent = get_agent(a.key)
+            agent.checkpointer = saver
         yield
     # context manager will clean up the AsyncSqliteSaver on exit
 
@@ -104,7 +107,7 @@ def _parse_input(user_input: UserInput) -> tuple[dict[str, Any], str]:
 
 
 async def ainvoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMessage:
-    agent: CompiledStateGraph = agents[agent_id]
+    agent: CompiledStateGraph = get_agent(agent_id)
     kwargs, run_id = _parse_input(user_input)
     try:
         response = await agent.ainvoke(**kwargs)
@@ -146,7 +149,7 @@ async def message_generator(
 
     This is the workhorse method for the /stream endpoint.
     """
-    agent: CompiledStateGraph = agents[agent_id]
+    agent: CompiledStateGraph = get_agent(agent_id)
     kwargs, run_id = _parse_input(user_input)
 
     # Process streamed events from the graph and yield messages over the SSE stream.

@@ -4,6 +4,7 @@ from core import get_model, settings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import MessagesState, StateGraph
 from neo4j import GraphDatabase
 
@@ -148,4 +149,4 @@ graph.add_conditional_edges(
 graph.set_entry_point("generate_question")
 
 # Compile the graph
-app = graph.compile()
+research_assistant = graph.compile(checkpointer=MemorySaver())
