@@ -85,17 +85,10 @@ async def handle_wix_form(request: Request):
         output = langchain_to_chat_message(response["messages"][-1])
         output.run_id = str(run_id)
         # Return a response that Wix can use to update the page
-        return {
-            "status": "success",
-            "response": output.content,
-            "run_id": output.run_id
-        }
+        return {"status": "success", "response": output.content, "run_id": output.run_id}
     except Exception as e:
         logger.error(f"An exception occurred: {e}")
-        return {
-            "status": "error",
-            "message": "An unexpected error occurred"
-        }
+        return {"status": "error", "message": "An unexpected error occurred"}
 
 
 def _parse_input(user_input: UserInput) -> tuple[dict[str, Any], str]:

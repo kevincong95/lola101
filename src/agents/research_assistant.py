@@ -18,8 +18,9 @@ from agents.models import models
 # Neo4j connection setup
 load_dotenv()
 neo4j_username = "neo4j"
-neo4j_password = os.getenv('NEO4J_PASSWORD')
+neo4j_password = os.getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver("bolt://localhost:7687", auth=(neo4j_username, neo4j_password))
+
 
 class QuestionState(MessagesState):
     question_id: int
@@ -28,6 +29,7 @@ class QuestionState(MessagesState):
     correct_answer: str
     attempts: int
     messages: list[HumanMessage | AIMessage]
+
 
 instructions = f"""
     You are a helpful AP Computer Science A coding assistant. You will present questions to the user and evaluate their answers.
@@ -38,6 +40,7 @@ instructions = f"""
     - Evaluate the user's answer based on the correct answer(s) provided.
     - If the answer is incorrect, explain why without revealing the correct answer on the first attempt.
     """
+
 
 def wrap_model(model: BaseChatModel) -> RunnableSerializable[QuestionState, AIMessage]:
     preprocessor = RunnableLambda(
@@ -59,6 +62,7 @@ async def acall_model(state: QuestionState, config: RunnableConfig) -> QuestionS
 def generate_question_id(state: QuestionState) -> str:
     return f'LoLju0t00s{state["question_id"]}'
 
+
 def generate_seed_question(state: QuestionState) -> QuestionState:
     questionId = generate_question_id(state)
     query = """
@@ -67,7 +71,7 @@ def generate_seed_question(state: QuestionState) -> QuestionState:
             ORDER BY rand()
             LIMIT 1
             """
-    record, _, _ = driver.execute_query(query, {'questionId': questionId})
+    record, _, _ = driver.execute_query(query, {"questionId": questionId})
     result = record.single()
     if result:
         title, description, solution = result
@@ -77,7 +81,7 @@ def generate_seed_question(state: QuestionState) -> QuestionState:
             "correct_answer": solution,
             "attempts": 0,
             "messages": [AIMessage(content=f"{title}\n\n{description}")],
-            "question_id": state["question_id"]
+            "question_id": state["question_id"],
         }
     else:
         return {
@@ -86,7 +90,7 @@ def generate_seed_question(state: QuestionState) -> QuestionState:
             "correct_answer": "",
             "attempts": 0,
             "messages": [AIMessage(content="Sorry, no question is available at the moment.")],
-            "question_id": state["question_id"]
+            "question_id": state["question_id"],
         }
 
 
@@ -104,10 +108,7 @@ async def check_answer(state: QuestionState, config: RunnableConfig) -> Question
     If not, explain why it's wrong without revealing the correct answer or using the word 'correct'.
     """
 
-    response = await model_runnable.ainvoke(
-        {"messages": [AIMessage(content=prompt)]},
-        config
-    )
+    response = await model_runnable.ainvoke({"messages": [AIMessage(content=prompt)]}, config)
 
     if "correct" in response.content.lower():
         state["messages"].append(AIMessage(content=response.content))
@@ -116,11 +117,17 @@ async def check_answer(state: QuestionState, config: RunnableConfig) -> Question
     else:
         state["attempts"] += 1
         if state["attempts"] < 2:
-            state["messages"].append(AIMessage(content=f"{response.content} You have one more attempt."))
+            state["messages"].append(
+                AIMessage(content=f"{response.content} You have one more attempt.")
+            )
         else:
-            state["messages"].append(AIMessage(
-                content=f"{response.content} The correct answer was: {state['correct_answer']}. Let's move on to the next question."))
+            state["messages"].append(
+                AIMessage(
+                    content=f"{response.content} The correct answer was: {state['correct_answer']}. Let's move on to the next question."
+                )
+            )
         return state
+
 
 # Initialize the state graph
 graph = StateGraph(QuestionState)
@@ -129,20 +136,19 @@ graph = StateGraph(QuestionState)
 graph.add_node("generate_question", generate_seed_question)
 graph.add_node("check_answer", check_answer)
 
+
 # Define edges
 def should_continue(state: QuestionState) -> str:
     if state["attempts"] == 2 or state["messages"][-1].content.startswith("Correct!"):
         return "new_question"
     return "continue"
 
+
 graph.add_edge("generate_question", "check_answer")
 graph.add_conditional_edges(
     "check_answer",
     should_continue,
-    {
-        "new_question": "generate_question",
-        "continue": "check_answer"
-    }
+    {"new_question": "generate_question", "continue": "check_answer"},
 )
 
 # Set the entry point
