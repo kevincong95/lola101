@@ -5,3 +5,4 @@
 httpx~=0.26.0
 pydantic ~=2.9.0
 streamlit~=1.37.0
+uvicorn~=0.30.5

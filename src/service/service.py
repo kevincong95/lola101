@@ -75,6 +75,7 @@ async def handle_wix_form(request: Request):
     # Extract the user input from the form data
     # Adjust the key based on your Wix form structure
     user_input = form_data.get("user_response", "")
+    print(f"Wix request received: {json.dumps(form_data)}")
 
     # Create a UserInput object
     user_input_obj = UserInput(message=user_input)
